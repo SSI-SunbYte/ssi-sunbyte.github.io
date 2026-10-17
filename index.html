@@ -79,7 +79,7 @@ details{margin-top:26px}summary{cursor:pointer;color:var(--mu)}
 <nav><button data-v="over" class="on">Overview</button><button data-v="board">Board</button><button data-v="teams">Teams</button><button data-v="tl">Timeline</button><button data-v="set">Setup</button></nav><button id="thm" data-a="thm" title="Switch between light and dark mode"></button></header>
 <main id="m"></main>
 <script>
-const KEY="mission-control-v1",DAY=864e5,ST=["backlog","todo","doing","review","done"],SL={backlog:"Backlog",todo:"To do",doing:"In progress",review:"In review",done:"Done",blocked:"⚑ Blocked"};
+const KEY="mission-control-v1",API_URL="https://mission-control-api.onrender.com",DAY=864e5,ST=["backlog","todo","doing","review","done"],SL={backlog:"Backlog",todo:"To do",doing:"In progress",review:"In review",done:"Done",blocked:"⚑ Blocked"};
 const iso=d=>d.toISOString().slice(0,10),today=()=>new Date(iso(new Date())),uid=()=>Math.random().toString(36).slice(2,9);
 const days=(a,b)=>Math.round((new Date(a)-new Date(b))/DAY);
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -90,7 +90,19 @@ milestones:[{id:"m1",name:"Launch",date:iso(new Date(+today()+60*DAY)),team:""}]
 tasks:[{id:"k1",title:"Example: draft launch plan",team:"t1",status:"doing",end:iso(new Date(+today()+10*DAY)),blocked:false},
 {id:"k2",title:"Example: overdue task",team:"t2",status:"todo",end:iso(new Date(+today()-5*DAY)),blocked:false}]};
 try{const r=localStorage.getItem(KEY);if(r)S=JSON.parse(r)}catch(e){}
-const save=()=>{try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}};
+let saveTimer=null,loadingSharedState=true,saveRevision=0;
+const save=()=>{
+  try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}
+  if(loadingSharedState)return;
+  const revision=++saveRevision;
+  clearTimeout(saveTimer);
+  saveTimer=setTimeout(async()=>{
+    try{
+      const response=await fetch(API_URL+"/api/state",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({state:S})});
+      if(!response.ok)throw new Error("HTTP "+response.status);
+    }catch(e){console.error("Mission Control could not sync shared data. Check that the Python API is deployed and reachable.",e)}
+  },250);
+};
 const eff=()=>document.documentElement.dataset.theme||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');
 const paint=()=>{const b=document.getElementById('thm');if(b)b.textContent=eff()==='dark'?'☀️ Light':'🌙 Dark'};
 function toggleTheme(){const n=eff()==='dark'?'light':'dark';document.documentElement.dataset.theme=n;try{localStorage.setItem('mc-theme',n)}catch(e){}paint()}
@@ -255,5 +267,24 @@ if(!tp.on){if(Math.hypot(p.clientX-tp.x,p.clientY-tp.y)>8){clearTimeout(tp.timer
 e.preventDefault();tp.x=p.clientX;tp.y=p.clientY;tmove()},{passive:false});
 document.addEventListener("touchend",()=>tend(true));
 document.addEventListener("touchcancel",()=>tend(false));
-render();
+async function initSharedState(){
+  try{
+    const response=await fetch(API_URL+"/api/state",{cache:"no-store"});
+    if(!response.ok)throw new Error("HTTP "+response.status);
+    const result=await response.json();
+    if(result.state&&typeof result.state==="object"){
+      S=result.state;
+    }else{
+      // Seed the shared store once from this instance's existing saved data/defaults.
+      const response=await fetch(API_URL+"/api/state",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({state:S})});
+      if(!response.ok)throw new Error("Could not initialise shared state: HTTP "+response.status);
+    }
+  }catch(e){
+    console.error("Mission Control shared backend is unavailable; using this browser's saved copy for now.",e);
+  }finally{
+    loadingSharedState=false;
+    render();
+  }
+}
+initSharedState();
 </script></body></html>
